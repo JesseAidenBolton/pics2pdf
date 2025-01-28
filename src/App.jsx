@@ -1,123 +1,86 @@
-import React, { useState } from 'react';
-import { jsPDF } from 'jspdf';
-// (Optional) import an icon, e.g., from react-icons
-// import { FaUpload } from 'react-icons/fa';
+import React, { useRef, useState } from 'react'
+import { jsPDF } from 'jspdf'
 
 function App() {
-    const [files, setFiles] = useState([]);
+    const [files, setFiles] = useState([])
 
-    // Helper to read File object as data URL
+    // Create refs for each hidden file input
+    const cameraInputRef = useRef(null)
+    const galleryInputRef = useRef(null)
+
+    // Unified handler when files are selected/taken
+    const handleFileChange = (e) => {
+        // Combine newly chosen files with existing ones if desired
+        const newFiles = Array.from(e.target.files)
+        setFiles((prev) => [...prev, ...newFiles])
+    }
+
+    // PDF generation logic
     const fileToDataURL = (file) => {
         return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = (err) => reject(err);
-            reader.readAsDataURL(file);
-        });
-    };
+            const reader = new FileReader()
+            reader.onload = (e) => resolve(e.target.result)
+            reader.onerror = (err) => reject(err)
+            reader.readAsDataURL(file)
+        })
+    }
 
-    // Update state when files change
-    const handleFileChange = (e) => {
-        setFiles(Array.from(e.target.files));
-    };
-
-    // Generate PDF
     const generatePDF = async () => {
         if (files.length === 0) {
-            alert('No images selected!');
-            return;
+            alert('No images selected!')
+            return
         }
-
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
         for (let i = 0; i < files.length; i++) {
-            const dataURL = await fileToDataURL(files[i]);
-            if (i > 0) pdf.addPage();
-            pdf.addImage(dataURL, 'JPEG', 0, 0, 210, 297);
+            const dataURL = await fileToDataURL(files[i])
+            if (i > 0) pdf.addPage()
+            // Example: fill entire A4
+            pdf.addImage(dataURL, 'JPEG', 0, 0, 210, 297)
         }
-
-        pdf.save('my-photos.pdf');
-    };
-
-    // Inline styles (basic example)
-    const containerStyle = {
-        padding: '20px',
-        fontFamily: 'sans-serif',
-        maxWidth: '400px',
-        margin: '0 auto',
-    };
-
-    const headingStyle = {
-        textAlign: 'center',
-        color: '#333',
-    };
-
-    const fileInputContainerStyle = {
-        textAlign: 'center',
-        margin: '20px 0',
-    };
-
-    const hiddenInputStyle = {
-        display: 'none',
-    };
-
-    // A stylized button to open the file input
-    const uploadButtonStyle = {
-        display: 'inline-block',
-        padding: '12px 24px',
-        backgroundColor: '#6200ee',
-        color: '#fff',
-        borderRadius: '4px',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '16px',
-    };
-
-    const generateButtonStyle = {
-        display: 'inline-block',
-        padding: '12px 24px',
-        backgroundColor: '#03dac6',
-        color: '#000',
-        borderRadius: '4px',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '16px',
-    };
+        pdf.save('my-photos.pdf')
+    }
 
     return (
-        <div style={containerStyle}>
-            <h1 style={headingStyle}>Photos to PDF</h1>
+        <div style={{ padding: '20px' }}>
+            <h1>Pics2PDF</h1>
 
-            {/* Hidden file input */}
-            <div style={fileInputContainerStyle}>
-                <label htmlFor="file-upload" style={uploadButtonStyle}>
-                    {/* You could use an icon here, e.g. <FaUpload /> */}
-                    Select Photos
-                </label>
-                <input
-                    id="file-upload"
-                    style={hiddenInputStyle}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    multiple
-                    onChange={handleFileChange}
-                />
-            </div>
-
-            {/* Show how many files are selected */}
-            {files.length > 0 && (
-                <p style={{ textAlign: 'center' }}>{files.length} image(s) selected</p>
-            )}
-
-            {/* Button to generate PDF */}
-            <div style={{ textAlign: 'center', marginTop: '20px' }}>
-                <button style={generateButtonStyle} onClick={generatePDF}>
-                    Generate PDF
+            {/* Buttons to open hidden inputs */}
+            <div style={{ marginBottom: '20px' }}>
+                <button onClick={() => cameraInputRef.current.click()}>Take Photo(s)</button>
+                <button onClick={() => galleryInputRef.current.click()} style={{ marginLeft: '10px' }}>
+                    Select from Gallery
                 </button>
             </div>
+
+            {/* Hidden file inputs */}
+            {/* 1) Camera input (capture="environment") */}
+            <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+            />
+
+            {/* 2) Gallery input (no capture attribute) */}
+            <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+            />
+
+            {/* Display how many files have been selected */}
+            <p>{files.length} image(s) selected</p>
+
+            {/* Generate PDF button */}
+            <button onClick={generatePDF}>Generate PDF</button>
         </div>
-    );
+    )
 }
 
-export default App;
+export default App
