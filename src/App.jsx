@@ -1,86 +1,177 @@
-import React, { useRef, useState } from 'react'
-import { jsPDF } from 'jspdf'
+import React, { useState, useRef } from 'react';
+import { jsPDF } from 'jspdf';
 
 function App() {
-    const [files, setFiles] = useState([])
+    const [files, setFiles] = useState([]);
 
-    // Create refs for each hidden file input
-    const cameraInputRef = useRef(null)
-    const galleryInputRef = useRef(null)
+    // Refs for two hidden file inputs
+    const cameraInputRef = useRef(null);
+    const galleryInputRef = useRef(null);
 
-    // Unified handler when files are selected/taken
+    // Handle any file selection and merge with existing files
     const handleFileChange = (e) => {
-        // Combine newly chosen files with existing ones if desired
-        const newFiles = Array.from(e.target.files)
-        setFiles((prev) => [...prev, ...newFiles])
-    }
+        const newFiles = Array.from(e.target.files);
+        setFiles((prev) => [...prev, ...newFiles]);
+    };
 
-    // PDF generation logic
+    // Convert File object to Data URL
     const fileToDataURL = (file) => {
         return new Promise((resolve, reject) => {
-            const reader = new FileReader()
-            reader.onload = (e) => resolve(e.target.result)
-            reader.onerror = (err) => reject(err)
-            reader.readAsDataURL(file)
-        })
-    }
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (err) => reject(err);
+            reader.readAsDataURL(file);
+        });
+    };
 
+    // Generate PDF with correct aspect ratio
     const generatePDF = async () => {
         if (files.length === 0) {
-            alert('No images selected!')
-            return
+            alert('No images selected!');
+            return;
         }
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const pageWidth = 210;
+        const pageHeight = 297;
+
         for (let i = 0; i < files.length; i++) {
-            const dataURL = await fileToDataURL(files[i])
-            if (i > 0) pdf.addPage()
-            // Example: fill entire A4
-            pdf.addImage(dataURL, 'JPEG', 0, 0, 210, 297)
+            const dataURL = await fileToDataURL(files[i]);
+
+            // Load image so we can measure its native width & height
+            const img = new Image();
+            img.src = dataURL;
+            await new Promise((resolve) => {
+                img.onload = resolve;
+            });
+
+            const imgWidth = img.width;
+            const imgHeight = img.height;
+
+            // Calculate final width/height to preserve aspect ratio within A4
+            let finalWidth = pageWidth;
+            let finalHeight = pageHeight;
+
+            if (imgWidth / imgHeight > pageWidth / pageHeight) {
+                // Image is relatively wider → match page width, scale height
+                finalHeight = (imgHeight / imgWidth) * pageWidth;
+            } else {
+                // Image is relatively taller → match page height, scale width
+                finalWidth = (imgWidth / imgHeight) * pageHeight;
+            }
+
+            // Center the image on the page
+            const x = (pageWidth - finalWidth) / 2;
+            const y = (pageHeight - finalHeight) / 2;
+
+            // Add a new page for subsequent images
+            if (i > 0) {
+                pdf.addPage();
+            }
+
+            pdf.addImage(img, 'JPEG', x, y, finalWidth, finalHeight);
         }
-        pdf.save('my-photos.pdf')
-    }
+
+        pdf.save('my-photos.pdf');
+    };
+
+    // ============== STYLES ============== //
+    const containerStyle = {
+        padding: '20px',
+        fontFamily: 'sans-serif',
+        maxWidth: '400px',
+        margin: '0 auto',
+        textAlign: 'center',
+    };
+
+    const headingStyle = {
+        color: '#333',
+    };
+
+    // We'll create a container for the two buttons
+    const buttonContainerStyle = {
+        display: 'flex',
+        flexDirection: 'column', // stack vertically on small screens
+        gap: '10px',
+        alignItems: 'center',
+        marginBottom: '20px',
+    };
+
+    const hiddenInputStyle = {
+        display: 'none',
+    };
+
+    const buttonStyle = {
+        display: 'block',
+        width: '100%',
+        maxWidth: '300px',
+        padding: '12px 24px',
+        backgroundColor: '#6200ee',
+        color: '#fff',
+        borderRadius: '4px',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '16px',
+    };
+
+    const buttonStyle2 = {
+        ...buttonStyle,
+        backgroundColor: '#03dac6',
+        color: '#000',
+        marginTop: '10px',
+    };
 
     return (
-        <div style={{ padding: '20px' }}>
-            <h1>Pics2PDF</h1>
+        <div style={containerStyle}>
+            <h1 style={headingStyle}>Pics2PDF</h1>
 
-            {/* Buttons to open hidden inputs */}
-            <div style={{ marginBottom: '20px' }}>
-                <button onClick={() => cameraInputRef.current.click()}>Take Photo(s)</button>
-                <button onClick={() => galleryInputRef.current.click()} style={{ marginLeft: '10px' }}>
+            {/* Button row for Camera vs. Gallery */}
+            <div style={buttonContainerStyle}>
+                {/* Take Photo(s) button */}
+                <button
+                    style={buttonStyle}
+                    onClick={() => cameraInputRef.current.click()}
+                >
+                    Take Photo(s)
+                </button>
+                {/* Hidden file input for camera */}
+                <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    multiple
+                    style={hiddenInputStyle}
+                    onChange={handleFileChange}
+                />
+
+                {/* Select from Gallery button */}
+                <button
+                    style={buttonStyle}
+                    onClick={() => galleryInputRef.current.click()}
+                >
                     Select from Gallery
                 </button>
+                {/* Hidden file input for gallery */}
+                <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={hiddenInputStyle}
+                    onChange={handleFileChange}
+                />
             </div>
 
-            {/* Hidden file inputs */}
-            {/* 1) Camera input (capture="environment") */}
-            <input
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                multiple
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
-            />
+            {/* Show how many total images selected */}
+            {files.length > 0 && <p>{files.length} image(s) selected</p>}
 
-            {/* 2) Gallery input (no capture attribute) */}
-            <input
-                ref={galleryInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
-            />
-
-            {/* Display how many files have been selected */}
-            <p>{files.length} image(s) selected</p>
-
-            {/* Generate PDF button */}
-            <button onClick={generatePDF}>Generate PDF</button>
+            {/* Generate PDF Button */}
+            <button style={buttonStyle2} onClick={generatePDF}>
+                Generate PDF
+            </button>
         </div>
-    )
+    );
 }
 
-export default App
+export default App;
