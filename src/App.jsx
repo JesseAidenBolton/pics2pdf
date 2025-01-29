@@ -1,20 +1,36 @@
-import React, { useState, useRef } from 'react';
-import { jsPDF } from 'jspdf';
+import React, { useState, useRef } from 'react'
+import { jsPDF } from 'jspdf'
+
+function moveItem(arr, fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= arr.length) return arr; // no move if out of bounds
+    const newArr = [...arr];
+    const item = newArr.splice(fromIndex, 1)[0];
+    newArr.splice(toIndex, 0, item);
+    return newArr;
+}
 
 function App() {
     const [files, setFiles] = useState([]);
 
-    // Refs for two hidden file inputs
-    const cameraInputRef = useRef(null);
-    const galleryInputRef = useRef(null);
+    const cameraRef = useRef(null);
+    const galleryRef = useRef(null);
 
-    // Handle any file selection and merge with existing files
+    // Add newly selected files to the array (so user can combine camera+gallery)
     const handleFileChange = (e) => {
         const newFiles = Array.from(e.target.files);
         setFiles((prev) => [...prev, ...newFiles]);
     };
 
-    // Convert File object to Data URL
+    // Move an item up or down in the list
+    const moveUp = (index) => {
+        setFiles((prev) => moveItem(prev, index, index - 1));
+    };
+
+    const moveDown = (index) => {
+        setFiles((prev) => moveItem(prev, index, index + 1));
+    };
+
+    // Convert file to data URL
     const fileToDataURL = (file) => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -24,7 +40,7 @@ function App() {
         });
     };
 
-    // Generate PDF with correct aspect ratio
+    // Generate PDF with smaller bounding box
     const generatePDF = async () => {
         if (files.length === 0) {
             alert('No images selected!');
@@ -35,65 +51,58 @@ function App() {
         const pageWidth = 210;
         const pageHeight = 297;
 
+        // bounding box smaller than full page to avoid "full-page stretch"
+        const boundingWidth = 150;
+        const boundingHeight = 100;
+
         for (let i = 0; i < files.length; i++) {
             const dataURL = await fileToDataURL(files[i]);
 
-            // Load image so we can measure its native width & height
+            // Load in an <img> to get actual width/height
             const img = new Image();
             img.src = dataURL;
-            await new Promise((resolve) => {
-                img.onload = resolve;
-            });
+            await new Promise((resolve) => { img.onload = resolve; });
 
             const imgWidth = img.width;
             const imgHeight = img.height;
 
-            // Calculate final width/height to preserve aspect ratio within A4
-            let finalWidth = pageWidth;
-            let finalHeight = pageHeight;
+            // aspect-ratio scaling to fit bounding box
+            let finalWidth = boundingWidth;
+            let finalHeight = boundingHeight;
 
-            if (imgWidth / imgHeight > pageWidth / pageHeight) {
-                // Image is relatively wider → match page width, scale height
-                finalHeight = (imgHeight / imgWidth) * pageWidth;
+            if (imgWidth / imgHeight > boundingWidth / boundingHeight) {
+                // If the image is relatively wider, match boundingWidth and scale height
+                finalHeight = (imgHeight / imgWidth) * boundingWidth;
             } else {
-                // Image is relatively taller → match page height, scale width
-                finalWidth = (imgWidth / imgHeight) * pageHeight;
+                // If the image is relatively taller, match boundingHeight and scale width
+                finalWidth = (imgWidth / imgHeight) * boundingHeight;
             }
 
-            // Center the image on the page
+            // center that bounding box on the page
             const x = (pageWidth - finalWidth) / 2;
             const y = (pageHeight - finalHeight) / 2;
 
-            // Add a new page for subsequent images
-            if (i > 0) {
-                pdf.addPage();
-            }
-
+            if (i > 0) pdf.addPage();
             pdf.addImage(img, 'JPEG', x, y, finalWidth, finalHeight);
         }
 
         pdf.save('my-photos.pdf');
     };
 
-    // ============== STYLES ============== //
+    // ======= Basic Styles (mobile-friendly) ======= //
     const containerStyle = {
-        padding: '20px',
         fontFamily: 'sans-serif',
         maxWidth: '400px',
         margin: '0 auto',
+        padding: '20px',
         textAlign: 'center',
     };
 
-    const headingStyle = {
-        color: '#333',
-    };
-
-    // We'll create a container for the two buttons
-    const buttonContainerStyle = {
+    const buttonRowStyle = {
         display: 'flex',
-        flexDirection: 'column', // stack vertically on small screens
-        gap: '10px',
+        flexDirection: 'column',
         alignItems: 'center',
+        gap: '10px',
         marginBottom: '20px',
     };
 
@@ -108,66 +117,120 @@ function App() {
         padding: '12px 24px',
         backgroundColor: '#6200ee',
         color: '#fff',
-        borderRadius: '4px',
         border: 'none',
+        borderRadius: '4px',
         cursor: 'pointer',
         fontSize: '16px',
     };
 
-    const buttonStyle2 = {
+    const pdfButtonStyle = {
         ...buttonStyle,
         backgroundColor: '#03dac6',
         color: '#000',
         marginTop: '10px',
     };
 
+    const thumbnailListStyle = {
+        listStyle: 'none',
+        padding: 0,
+        margin: '20px 0',
+    };
+
+    const thumbnailItemStyle = {
+        marginBottom: '10px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '10px',
+    };
+
+    const thumbnailImageStyle = {
+        width: '60px',
+        height: '60px',
+        objectFit: 'cover',
+        borderRadius: '4px',
+    };
+
+    const reorderButtonsStyle = {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+    };
+
+    const smallButtonStyle = {
+        padding: '4px 8px',
+        fontSize: '12px',
+        cursor: 'pointer',
+    };
+
     return (
         <div style={containerStyle}>
-            <h1 style={headingStyle}>Pics2PDF</h1>
+            <h1>Pics2PDF</h1>
 
-            {/* Button row for Camera vs. Gallery */}
-            <div style={buttonContainerStyle}>
-                {/* Take Photo(s) button */}
+            <div style={buttonRowStyle}>
                 <button
                     style={buttonStyle}
-                    onClick={() => cameraInputRef.current.click()}
+                    onClick={() => cameraRef.current.click()}
                 >
                     Take Photo(s)
                 </button>
-                {/* Hidden file input for camera */}
                 <input
-                    ref={cameraInputRef}
+                    ref={cameraRef}
+                    style={hiddenInputStyle}
                     type="file"
                     accept="image/*"
                     capture="environment"
                     multiple
-                    style={hiddenInputStyle}
                     onChange={handleFileChange}
                 />
 
-                {/* Select from Gallery button */}
                 <button
                     style={buttonStyle}
-                    onClick={() => galleryInputRef.current.click()}
+                    onClick={() => galleryRef.current.click()}
                 >
                     Select from Gallery
                 </button>
-                {/* Hidden file input for gallery */}
                 <input
-                    ref={galleryInputRef}
+                    ref={galleryRef}
+                    style={hiddenInputStyle}
                     type="file"
                     accept="image/*"
                     multiple
-                    style={hiddenInputStyle}
                     onChange={handleFileChange}
                 />
             </div>
 
-            {/* Show how many total images selected */}
-            {files.length > 0 && <p>{files.length} image(s) selected</p>}
+            {files.length > 0 && (
+                <>
+                    <p>{files.length} image(s) selected</p>
+                    <ul style={thumbnailListStyle}>
+                        {files.map((file, index) => {
+                            const fileURL = URL.createObjectURL(file);
+                            return (
+                                <li key={index} style={thumbnailItemStyle}>
+                                    <img src={fileURL} alt="thumb" style={thumbnailImageStyle} />
+                                    <div style={reorderButtonsStyle}>
+                                        <button
+                                            style={smallButtonStyle}
+                                            onClick={() => moveUp(index)}
+                                        >
+                                            Up
+                                        </button>
+                                        <button
+                                            style={smallButtonStyle}
+                                            onClick={() => moveDown(index)}
+                                        >
+                                            Down
+                                        </button>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </>
+            )}
 
-            {/* Generate PDF Button */}
-            <button style={buttonStyle2} onClick={generatePDF}>
+            <button style={pdfButtonStyle} onClick={generatePDF}>
                 Generate PDF
             </button>
         </div>
