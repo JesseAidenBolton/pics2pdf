@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { jsPDF } from 'jspdf';
 
-// Helper: move an item in an array from one index to another
+// Move an item in an array from one index to another
 function moveItem(arr, fromIndex, toIndex) {
     if (toIndex < 0 || toIndex >= arr.length) return arr; // out of bounds
     const newArr = [...arr];
@@ -11,34 +11,31 @@ function moveItem(arr, fromIndex, toIndex) {
 }
 
 function App() {
-    // Instead of just storing Files, we'll store objects: { file, rotation }
-    // so we can keep track of each image's rotation
+    // We store objects with { file, rotation } for each image
     const [images, setImages] = useState([]);
 
     const cameraRef = useRef(null);
     const galleryRef = useRef(null);
 
-    // Add newly selected files
+    // Convert File -> { file, rotation: 0 } and append to our list
     const handleFileChange = (e) => {
         const newFiles = Array.from(e.target.files).map((f) => ({
             file: f,
-            rotation: 0, // default rotation
+            rotation: 0,
         }));
-        // Merge with existing
         setImages((prev) => [...prev, ...newFiles]);
     };
 
-    // Rotate an image in 90-degree increments
+    // Rotate an image in 90-degree steps
     const rotateImage = (index) => {
         setImages((prev) => {
             const updated = [...prev];
-            // increment rotation by 90°, wrap around at 360
             updated[index].rotation = (updated[index].rotation + 90) % 360;
             return updated;
         });
     };
 
-    // Move image up/down
+    // Move Up/Down
     const moveUp = (index) => {
         setImages((prev) => moveItem(prev, index, index - 1));
     };
@@ -47,7 +44,7 @@ function App() {
         setImages((prev) => moveItem(prev, index, index + 1));
     };
 
-    // Convert file to Data URL
+    // Convert File to Base64 Data URL
     const fileToDataURL = (file) => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -57,81 +54,121 @@ function App() {
         });
     };
 
-    // Generate PDF with proper orientation & scaling
+    /**
+     * Draw the image onto an offscreen canvas with the specified rotation.
+     * Also scale to fit "maxWidth" x "maxHeight" without stretching.
+     * Returns a dataURL from the canvas to pass to jsPDF.
+     */
+    const drawRotatedCanvas = async (base64, rotation, maxWidth, maxHeight) => {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.src = base64;
+            img.onload = () => {
+                // 1) Create an offscreen canvas
+                // If rotation = 90 or 270, the canvas base dimension is swapped
+                const rotated90or270 = rotation === 90 || rotation === 270;
+                const canvasWidth = rotated90or270 ? img.height : img.width;
+                const canvasHeight = rotated90or270 ? img.width : img.height;
+
+                // We'll draw at "full size" then scale down in a second step
+                const canvas = document.createElement('canvas');
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+
+                const ctx = canvas.getContext('2d');
+
+                // 2) Translate & rotate the context
+                // Rotate about center
+                ctx.translate(canvasWidth / 2, canvasHeight / 2);
+                ctx.rotate((rotation * Math.PI) / 180);
+                // Then draw image with its center at (0,0)
+                // So top-left corner is half width/height negative
+                const drawW = rotated90or270 ? img.height : img.width;
+                const drawH = rotated90or270 ? img.width : img.height;
+                ctx.drawImage(img, -drawW / 2, -drawH / 2);
+
+                // Now we have a "rotated" image on the canvas, but it's still
+                // the original full resolution dimension. We want to scale it
+                // to fit within maxWidth x maxHeight, preserving aspect ratio.
+
+                // 3) Scale down to fit in the PDF cell
+                // We'll create a second, final canvas for the scaled version.
+                const finalCanvas = document.createElement('canvas');
+
+                // figure out the aspect ratio for "canvas.width" x "canvas.height" => final bounding box
+                const ratio = canvas.width / canvas.height;
+                const boxRatio = maxWidth / maxHeight;
+
+                let targetW, targetH;
+                if (ratio > boxRatio) {
+                    // relatively wider => match width
+                    targetW = maxWidth;
+                    targetH = maxWidth / ratio;
+                } else {
+                    // relatively taller => match height
+                    targetH = maxHeight;
+                    targetW = maxHeight * ratio;
+                }
+
+                finalCanvas.width = targetW;
+                finalCanvas.height = targetH;
+                const finalCtx = finalCanvas.getContext('2d');
+
+                // draw the big rotated canvas onto the smaller final canvas
+                finalCtx.drawImage(canvas, 0, 0, targetW, targetH);
+
+                const dataURL = finalCanvas.toDataURL('image/jpeg', 0.9);
+                resolve(dataURL);
+            };
+        });
+    };
+
+    // Generate PDF with 2x2 grid per page
     const generatePDF = async () => {
         if (images.length === 0) {
             alert('No images selected!');
             return;
         }
 
-        const pdf = new jsPDF({
-            orientation: 'portrait', // we can keep the page itself portrait
-            unit: 'mm',
-            format: 'a4',
-        });
-
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
         const pageWidth = 210;
         const pageHeight = 297;
 
+        const cols = 2;
+        const rows = 2;
+        const imagesPerPage = cols * rows; // 4
+
+        // Each cell's bounding box in mm
+        const cellWidth = pageWidth / cols;    // e.g. 105
+        const cellHeight = pageHeight / rows;  // e.g. 148.5
+
+        let indexInPage = 0; // track how many images placed on the current page
+
         for (let i = 0; i < images.length; i++) {
             const { file, rotation } = images[i];
+            const base64 = await fileToDataURL(file);
 
-            // Load file as data URL
-            const dataURL = await fileToDataURL(file);
+            // We'll produce a final dataURL with the rotation & scaled to fit cell
+            const rotatedDataURL = await drawRotatedCanvas(base64, rotation, cellWidth, cellHeight);
 
-            // Create <img> so we can measure its width/height
-            const img = new Image();
-            img.src = dataURL;
-            await new Promise((resolve) => {
-                img.onload = resolve;
-            });
+            // Figure out row & col for this image
+            const row = Math.floor(indexInPage / cols);
+            const col = indexInPage % cols;
 
-            // The "natural" image size
-            let imgWidth = img.width;
-            let imgHeight = img.height;
+            const x = col * cellWidth;   // left coordinate
+            const y = row * cellHeight;  // top coordinate
 
-            // If rotating 90 or 270, the effective width/height is swapped
-            // because it's turned sideways
-            const rot = rotation % 180; // only care if it's 0/180 or 90/270
-            if (rot !== 0) {
-                // swap
-                [imgWidth, imgHeight] = [imgHeight, imgWidth];
-            }
+            // Add the image to PDF at (x,y), sized to exactly cellWidth/Height
+            pdf.addImage(rotatedDataURL, 'JPEG', x, y, cellWidth, cellHeight);
 
-            // We'll scale to fit the full page, but preserve aspect ratio
-            let finalWidth = pageWidth;
-            let finalHeight = pageHeight;
+            indexInPage++;
 
-            if (imgWidth / imgHeight > pageWidth / pageHeight) {
-                // If image is relatively wider → match pageWidth, scale height
-                finalHeight = (imgHeight / imgWidth) * pageWidth;
-            } else {
-                // If image is relatively taller → match pageHeight, scale width
-                finalWidth = (imgWidth / imgHeight) * pageHeight;
-            }
-
-            // Center the image on the page
-            const x = (pageWidth - finalWidth) / 2;
-            const y = (pageHeight - finalHeight) / 2;
-
-            // If not first image, add page
-            if (i > 0) {
+            // If we've filled up the page (4 images), or it's the last image
+            // If there's still more images, add a page and reset indexInPage
+            if (indexInPage === imagesPerPage && i < images.length - 1) {
                 pdf.addPage();
+                indexInPage = 0;
             }
-
-            // The 9th param in addImage is rotation in degrees
-            // jsPDF rotates around the image's center
-            pdf.addImage(
-                img,           // image data
-                'JPEG',
-                x,
-                y,
-                finalWidth,
-                finalHeight,
-                undefined,     // alias
-                undefined,     // compression
-                rotation       // rotate degrees
-            );
         }
 
         pdf.save('my-photos.pdf');
@@ -149,9 +186,9 @@ function App() {
     const buttonRowStyle = {
         display: 'flex',
         flexDirection: 'column',
+        alignItems: 'center',
         gap: '10px',
         marginBottom: '20px',
-        alignItems: 'center',
     };
 
     const hiddenInputStyle = { display: 'none' };
@@ -176,39 +213,34 @@ function App() {
         marginTop: '10px',
     };
 
-    const imageListStyle = {
+    // Thumbnails list
+    const listStyle = {
         listStyle: 'none',
         padding: 0,
         margin: '20px 0',
     };
-
-    const imageItemStyle = {
+    const itemStyle = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         marginBottom: '10px',
     };
-
-    const thumbnailContainerStyle = {
+    const leftStyle = {
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
     };
-
-    const thumbnailStyle = {
+    const thumbStyle = {
         width: '60px',
         height: '60px',
         objectFit: 'cover',
         borderRadius: '4px',
-        // We'll also rotate the thumbnail in the UI using CSS
     };
-
-    const smallButtonContainerStyle = {
+    const smallButtonColumn = {
         display: 'flex',
         flexDirection: 'column',
         gap: '4px',
     };
-
     const smallButtonStyle = {
         padding: '4px 8px',
         fontSize: '12px',
@@ -217,9 +249,10 @@ function App() {
 
     return (
         <div style={containerStyle}>
-            <h1>Pics2PDF</h1>
+            <h1>Pics2PDF (2x2 Grid)</h1>
 
             <div style={buttonRowStyle}>
+                {/* Camera */}
                 <button style={bigButtonStyle} onClick={() => cameraRef.current.click()}>
                     Take Photo(s)
                 </button>
@@ -233,6 +266,7 @@ function App() {
                     onChange={handleFileChange}
                 />
 
+                {/* Gallery */}
                 <button style={bigButtonStyle} onClick={() => galleryRef.current.click()}>
                     Select from Gallery
                 </button>
@@ -249,25 +283,24 @@ function App() {
             {images.length > 0 && (
                 <>
                     <p>{images.length} image(s) selected</p>
-                    <ul style={imageListStyle}>
+                    <ul style={listStyle}>
                         {images.map((imgObj, index) => {
                             const fileURL = URL.createObjectURL(imgObj.file);
-                            // We'll rotate the thumbnail in UI using CSS transform
-                            const rotationCSS = `rotate(${imgObj.rotation}deg)`;
+                            const cssRotation = `rotate(${imgObj.rotation}deg)`;
 
                             return (
-                                <li key={index} style={imageItemStyle}>
-                                    <div style={thumbnailContainerStyle}>
+                                <li key={index} style={itemStyle}>
+                                    <div style={leftStyle}>
                                         <img
                                             src={fileURL}
                                             alt="preview"
                                             style={{
-                                                ...thumbnailStyle,
-                                                transform: rotationCSS
+                                                ...thumbStyle,
+                                                transform: cssRotation,
                                             }}
                                         />
                                     </div>
-                                    <div style={smallButtonContainerStyle}>
+                                    <div style={smallButtonColumn}>
                                         <button style={smallButtonStyle} onClick={() => rotateImage(index)}>
                                             Rotate
                                         </button>
