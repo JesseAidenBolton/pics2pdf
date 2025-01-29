@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react'
-import { jsPDF } from 'jspdf'
+import React, { useState, useRef } from 'react';
+import { jsPDF } from 'jspdf';
 
+// Helper: move an item in an array from one index to another
 function moveItem(arr, fromIndex, toIndex) {
-    if (toIndex < 0 || toIndex >= arr.length) return arr; // no move if out of bounds
+    if (toIndex < 0 || toIndex >= arr.length) return arr; // out of bounds
     const newArr = [...arr];
     const item = newArr.splice(fromIndex, 1)[0];
     newArr.splice(toIndex, 0, item);
@@ -10,27 +11,43 @@ function moveItem(arr, fromIndex, toIndex) {
 }
 
 function App() {
-    const [files, setFiles] = useState([]);
+    // Instead of just storing Files, we'll store objects: { file, rotation }
+    // so we can keep track of each image's rotation
+    const [images, setImages] = useState([]);
 
     const cameraRef = useRef(null);
     const galleryRef = useRef(null);
 
-    // Add newly selected files to the array (so user can combine camera+gallery)
+    // Add newly selected files
     const handleFileChange = (e) => {
-        const newFiles = Array.from(e.target.files);
-        setFiles((prev) => [...prev, ...newFiles]);
+        const newFiles = Array.from(e.target.files).map((f) => ({
+            file: f,
+            rotation: 0, // default rotation
+        }));
+        // Merge with existing
+        setImages((prev) => [...prev, ...newFiles]);
     };
 
-    // Move an item up or down in the list
+    // Rotate an image in 90-degree increments
+    const rotateImage = (index) => {
+        setImages((prev) => {
+            const updated = [...prev];
+            // increment rotation by 90°, wrap around at 360
+            updated[index].rotation = (updated[index].rotation + 90) % 360;
+            return updated;
+        });
+    };
+
+    // Move image up/down
     const moveUp = (index) => {
-        setFiles((prev) => moveItem(prev, index, index - 1));
+        setImages((prev) => moveItem(prev, index, index - 1));
     };
 
     const moveDown = (index) => {
-        setFiles((prev) => moveItem(prev, index, index + 1));
+        setImages((prev) => moveItem(prev, index, index + 1));
     };
 
-    // Convert file to data URL
+    // Convert file to Data URL
     const fileToDataURL = (file) => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -40,56 +57,87 @@ function App() {
         });
     };
 
-    // Generate PDF with smaller bounding box
+    // Generate PDF with proper orientation & scaling
     const generatePDF = async () => {
-        if (files.length === 0) {
+        if (images.length === 0) {
             alert('No images selected!');
             return;
         }
 
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const pdf = new jsPDF({
+            orientation: 'portrait', // we can keep the page itself portrait
+            unit: 'mm',
+            format: 'a4',
+        });
+
         const pageWidth = 210;
         const pageHeight = 297;
 
-        // bounding box smaller than full page to avoid "full-page stretch"
-        const boundingWidth = 150;
-        const boundingHeight = 100;
+        for (let i = 0; i < images.length; i++) {
+            const { file, rotation } = images[i];
 
-        for (let i = 0; i < files.length; i++) {
-            const dataURL = await fileToDataURL(files[i]);
+            // Load file as data URL
+            const dataURL = await fileToDataURL(file);
 
-            // Load in an <img> to get actual width/height
+            // Create <img> so we can measure its width/height
             const img = new Image();
             img.src = dataURL;
-            await new Promise((resolve) => { img.onload = resolve; });
+            await new Promise((resolve) => {
+                img.onload = resolve;
+            });
 
-            const imgWidth = img.width;
-            const imgHeight = img.height;
+            // The "natural" image size
+            let imgWidth = img.width;
+            let imgHeight = img.height;
 
-            // aspect-ratio scaling to fit bounding box
-            let finalWidth = boundingWidth;
-            let finalHeight = boundingHeight;
-
-            if (imgWidth / imgHeight > boundingWidth / boundingHeight) {
-                // If the image is relatively wider, match boundingWidth and scale height
-                finalHeight = (imgHeight / imgWidth) * boundingWidth;
-            } else {
-                // If the image is relatively taller, match boundingHeight and scale width
-                finalWidth = (imgWidth / imgHeight) * boundingHeight;
+            // If rotating 90 or 270, the effective width/height is swapped
+            // because it's turned sideways
+            const rot = rotation % 180; // only care if it's 0/180 or 90/270
+            if (rot !== 0) {
+                // swap
+                [imgWidth, imgHeight] = [imgHeight, imgWidth];
             }
 
-            // center that bounding box on the page
+            // We'll scale to fit the full page, but preserve aspect ratio
+            let finalWidth = pageWidth;
+            let finalHeight = pageHeight;
+
+            if (imgWidth / imgHeight > pageWidth / pageHeight) {
+                // If image is relatively wider → match pageWidth, scale height
+                finalHeight = (imgHeight / imgWidth) * pageWidth;
+            } else {
+                // If image is relatively taller → match pageHeight, scale width
+                finalWidth = (imgWidth / imgHeight) * pageHeight;
+            }
+
+            // Center the image on the page
             const x = (pageWidth - finalWidth) / 2;
             const y = (pageHeight - finalHeight) / 2;
 
-            if (i > 0) pdf.addPage();
-            pdf.addImage(img, 'JPEG', x, y, finalWidth, finalHeight);
+            // If not first image, add page
+            if (i > 0) {
+                pdf.addPage();
+            }
+
+            // The 9th param in addImage is rotation in degrees
+            // jsPDF rotates around the image's center
+            pdf.addImage(
+                img,           // image data
+                'JPEG',
+                x,
+                y,
+                finalWidth,
+                finalHeight,
+                undefined,     // alias
+                undefined,     // compression
+                rotation       // rotate degrees
+            );
         }
 
         pdf.save('my-photos.pdf');
     };
 
-    // ======= Basic Styles (mobile-friendly) ======= //
+    // ======= STYLES ======= //
     const containerStyle = {
         fontFamily: 'sans-serif',
         maxWidth: '400px',
@@ -101,16 +149,14 @@ function App() {
     const buttonRowStyle = {
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
         gap: '10px',
         marginBottom: '20px',
+        alignItems: 'center',
     };
 
-    const hiddenInputStyle = {
-        display: 'none',
-    };
+    const hiddenInputStyle = { display: 'none' };
 
-    const buttonStyle = {
+    const bigButtonStyle = {
         display: 'block',
         width: '100%',
         maxWidth: '300px',
@@ -124,34 +170,40 @@ function App() {
     };
 
     const pdfButtonStyle = {
-        ...buttonStyle,
+        ...bigButtonStyle,
         backgroundColor: '#03dac6',
         color: '#000',
         marginTop: '10px',
     };
 
-    const thumbnailListStyle = {
+    const imageListStyle = {
         listStyle: 'none',
         padding: 0,
         margin: '20px 0',
     };
 
-    const thumbnailItemStyle = {
-        marginBottom: '10px',
+    const imageItemStyle = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        marginBottom: '10px',
+    };
+
+    const thumbnailContainerStyle = {
+        display: 'flex',
+        alignItems: 'center',
         gap: '10px',
     };
 
-    const thumbnailImageStyle = {
+    const thumbnailStyle = {
         width: '60px',
         height: '60px',
         objectFit: 'cover',
         borderRadius: '4px',
+        // We'll also rotate the thumbnail in the UI using CSS
     };
 
-    const reorderButtonsStyle = {
+    const smallButtonContainerStyle = {
         display: 'flex',
         flexDirection: 'column',
         gap: '4px',
@@ -168,58 +220,61 @@ function App() {
             <h1>Pics2PDF</h1>
 
             <div style={buttonRowStyle}>
-                <button
-                    style={buttonStyle}
-                    onClick={() => cameraRef.current.click()}
-                >
+                <button style={bigButtonStyle} onClick={() => cameraRef.current.click()}>
                     Take Photo(s)
                 </button>
                 <input
                     ref={cameraRef}
-                    style={hiddenInputStyle}
                     type="file"
                     accept="image/*"
                     capture="environment"
                     multiple
+                    style={hiddenInputStyle}
                     onChange={handleFileChange}
                 />
 
-                <button
-                    style={buttonStyle}
-                    onClick={() => galleryRef.current.click()}
-                >
+                <button style={bigButtonStyle} onClick={() => galleryRef.current.click()}>
                     Select from Gallery
                 </button>
                 <input
                     ref={galleryRef}
-                    style={hiddenInputStyle}
                     type="file"
                     accept="image/*"
                     multiple
+                    style={hiddenInputStyle}
                     onChange={handleFileChange}
                 />
             </div>
 
-            {files.length > 0 && (
+            {images.length > 0 && (
                 <>
-                    <p>{files.length} image(s) selected</p>
-                    <ul style={thumbnailListStyle}>
-                        {files.map((file, index) => {
-                            const fileURL = URL.createObjectURL(file);
+                    <p>{images.length} image(s) selected</p>
+                    <ul style={imageListStyle}>
+                        {images.map((imgObj, index) => {
+                            const fileURL = URL.createObjectURL(imgObj.file);
+                            // We'll rotate the thumbnail in UI using CSS transform
+                            const rotationCSS = `rotate(${imgObj.rotation}deg)`;
+
                             return (
-                                <li key={index} style={thumbnailItemStyle}>
-                                    <img src={fileURL} alt="thumb" style={thumbnailImageStyle} />
-                                    <div style={reorderButtonsStyle}>
-                                        <button
-                                            style={smallButtonStyle}
-                                            onClick={() => moveUp(index)}
-                                        >
+                                <li key={index} style={imageItemStyle}>
+                                    <div style={thumbnailContainerStyle}>
+                                        <img
+                                            src={fileURL}
+                                            alt="preview"
+                                            style={{
+                                                ...thumbnailStyle,
+                                                transform: rotationCSS
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={smallButtonContainerStyle}>
+                                        <button style={smallButtonStyle} onClick={() => rotateImage(index)}>
+                                            Rotate
+                                        </button>
+                                        <button style={smallButtonStyle} onClick={() => moveUp(index)}>
                                             Up
                                         </button>
-                                        <button
-                                            style={smallButtonStyle}
-                                            onClick={() => moveDown(index)}
-                                        >
+                                        <button style={smallButtonStyle} onClick={() => moveDown(index)}>
                                             Down
                                         </button>
                                     </div>
